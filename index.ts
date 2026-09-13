@@ -21,11 +21,18 @@ import type { ExtensionAPI } from "theoses-coding-agent";
  * (dropped detail already gets a chance to land in memory) — this extension only replaces WHAT
  * goes into the live prompt at a compaction boundary, not whether anything is remembered.
  *
- * Scope: RPC-mode sessions only (Telegram, dashboard, other channel integrations). Interactive
- * TUI coding-agent sessions keep the default LLM-summarization path — losing narrative
- * continuity (e.g. "we already tried X, it failed, don't redo it") is costlier there than in a
- * casual chat, and this hasn't been validated for that use case yet. See the design discussion
- * in theoses2#245 for the reasoning.
+ * Scope: everything except interactive TUI coding-agent sessions. Interactive TUI sessions keep
+ * the default LLM-summarization path — losing narrative continuity (e.g. "we already tried X, it
+ * failed, don't redo it") is costlier there than in a casual chat, and this hasn't been validated
+ * for that use case yet. See the design discussion in theoses2#245 for the reasoning.
+ *
+ * NOTE (found during staging validation): AgentSession defaults ctx.mode to "print" and only
+ * becomes "rpc" when a frontend explicitly binds to the session (agent-session.ts's
+ * bindings.mode, used by interactive-mode.ts / rpc-mode.ts). Telegram calls createAgentSession()
+ * directly and never binds, so Telegram sessions run as "print", not "rpc" — an earlier version
+ * of this extension checked `ctx.mode !== "rpc"` and silently never ran on Telegram at all. Guard
+ * on the mode we actually want to EXCLUDE ("tui") instead of the one we want to allow, since the
+ * allowed set is apparently larger/less predictable than expected.
  *
  * Reversible at three layers, cheapest first: (1) the `enabled` flag in
  * truncate-compaction.json flips behavior back with no redeploy; (2) this extension can simply
@@ -85,8 +92,8 @@ export default function theosesTruncateCompaction(theoses: ExtensionAPI) {
 	console.error("[truncate-compaction] factory invoked");
 
 	theoses.on("session_before_compact", async (event, ctx) => {
-		// RPC scope only (see header comment) — never intervene in TUI coding-agent sessions.
-		if (ctx.mode !== "rpc") return;
+		// Everything except interactive TUI coding-agent sessions (see header comment).
+		if (ctx.mode === "tui") return;
 
 		const config = await readConfig();
 		if (!config.enabled) return;

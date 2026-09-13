@@ -49,6 +49,13 @@ interface CompactionPreparationLike {
 	firstKeptEntryId: string;
 	tokensBefore: number;
 	messagesToSummarize: AgentMessageLike[];
+	/** Populated instead of (or alongside) messagesToSummarize when the cut point lands mid-turn
+	 * (a "split turn" compaction) — compaction.ts's own "anything to do" check
+	 * (messagesToSummarize.length === 0 && turnPrefixMessages.length === 0) treats both arrays
+	 * as the dropped span, so this extension must match that instead of only checking
+	 * messagesToSummarize (a real threshold compaction was missed during staging testing because
+	 * that one landed entirely in turnPrefixMessages). */
+	turnPrefixMessages: AgentMessageLike[];
 	trivialReset?: boolean;
 }
 
@@ -88,9 +95,10 @@ export default function theosesTruncateCompaction(theoses: ExtensionAPI) {
 		// trivialReset already skips the summarization LLM call in the default path (issue #204)
 		// — nothing for this extension to improve on, let the cheap default handle it.
 		if (preparation.trivialReset) return;
-		if (!preparation.messagesToSummarize.length) return;
+		const dropped = [...preparation.messagesToSummarize, ...(preparation.turnPrefixMessages ?? [])];
+		if (!dropped.length) return;
 
-		const turns = countTurns(preparation.messagesToSummarize);
+		const turns = countTurns(dropped);
 		const summary = `[${turns} earlier turn${turns === 1 ? "" : "s"} truncated — no summary was generated. ` +
 			`Relevant facts from this span may already be in long-term memory; use remember/recall if you need details.]`;
 

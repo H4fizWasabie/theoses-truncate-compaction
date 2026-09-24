@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext",
+    "allowImportingTsExtensions": true, "noEmit": true, "strict": true,
+    "skipLibCheck": true, "types": ["node"], "moduleDetection": "force",
+    "paths": { "theoses-coding-agent": ["./types/theoses-coding-agent.d.ts"] }
+  },
+  "include": ["ext/*.ts", "types/**/*.d.ts"]
+}

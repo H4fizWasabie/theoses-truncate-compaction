@@ -74,12 +74,21 @@ interface SessionBeforeCompactEventLike {
 const agentDir = process.env.THEOSES_CODING_AGENT_DIR || join(homedir(), ".theoses", "agent");
 const configPath = join(agentDir, "truncate-compaction.json");
 
+let lastConfigWarning: string | undefined;
+
 async function readConfig(): Promise<TruncateConfig> {
 	try {
 		return JSON.parse(await readFile(configPath, "utf8")) as TruncateConfig;
-	} catch {
+	} catch (error) {
 		// Missing/invalid config = disabled. A brand-new install should not silently start
 		// truncating context before someone has deliberately opted in.
+		// A missing file is the normal opt-out; an invalid one is a typo that would otherwise silently disable the
+		// feature, so say so (once per distinct message, since this runs on every compaction).
+		const message = error instanceof Error ? error.message : String(error);
+		if ((error as NodeJS.ErrnoException)?.code !== "ENOENT" && message !== lastConfigWarning) {
+			lastConfigWarning = message;
+			console.error(`[truncate-compaction] ${configPath} unusable, treating as disabled: ${message}`);
+		}
 		return { enabled: false };
 	}
 }

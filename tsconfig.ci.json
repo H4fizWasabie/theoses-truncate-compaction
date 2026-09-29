@@ -5,5 +5,5 @@
     "skipLibCheck": true, "types": ["node"], "moduleDetection": "force",
     "paths": { "theoses-coding-agent": ["./types/theoses-coding-agent.d.ts"] }
   },
-  "include": ["ext/*.ts", "types/**/*.d.ts"]
+  "include": ["*.ts", "types/**/*.d.ts"]
 }

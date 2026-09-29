@@ -43,6 +43,13 @@ import type { ExtensionAPI } from "theoses-coding-agent";
 
 interface TruncateConfig {
 	enabled?: boolean;
+	/** Opt-in (issue: running-total ledger). When true, if preparation.previousSummary is one of
+	 * this extension's own truncation markers, the new marker accumulates the total turns
+	 * truncated across all chained truncation passes (and the pass count) instead of resetting
+	 * to only the latest span's count. Deterministic, no LLM call, zero cost. With the flag
+	 * unset/false, marker text and all other behavior are byte-identical to the pre-ledger
+	 * extension (see buildTruncationSummary's tests). */
+	ledger?: boolean;
 }
 
 interface AgentMessageLike {
@@ -63,6 +70,10 @@ interface CompactionPreparationLike {
 	 * messagesToSummarize (a real threshold compaction was missed during staging testing because
 	 * that one landed entirely in turnPrefixMessages). */
 	turnPrefixMessages: AgentMessageLike[];
+	/** Previous compaction entry's summary, for iterative chaining — under this extension that
+	 * is our own marker text, which the opt-in ledger parses. Mirrors
+	 * CompactionPreparation.previousSummary. */
+	previousSummary?: string;
 	trivialReset?: boolean;
 }
 
@@ -97,6 +108,39 @@ function countTurns(messages: AgentMessageLike[]): number {
 	return messages.filter((m) => m.role === "user").length;
 }
 
+/** Matches markers produced by this extension. Group 1: turns truncated in the pass(es) the
+ * marker covers; group 2, when present: the cumulative pass count of a ledger marker. */
+const MARKER_RE = /^\[(\d+) earlier turns? truncated(?: across (\d+) compaction passes?)? — no summary was generated\./;
+
+export interface LedgerState {
+	totalTurns: number;
+	passes: number;
+}
+
+/** Pure: parse a previous summary into the truncation ledger it carries, if it is one of ours.
+ * Understands both the legacy single-pass marker and the ledger format. Non-marker summaries
+ * (LLM-generated, or the first pass with no previous compaction) return undefined. */
+export function parseTruncationLedger(previousSummary: string | undefined): LedgerState | undefined {
+	if (!previousSummary) return undefined;
+	const m = MARKER_RE.exec(previousSummary);
+	if (!m) return undefined;
+	const totalTurns = Number.parseInt(m[1], 10);
+	if (!Number.isFinite(totalTurns)) return undefined;
+	return { totalTurns, passes: m[2] ? Number.parseInt(m[2], 10) : 1 };
+}
+
+/** Pure: build the marker the extension writes. With a parsed prior ledger, folds the new
+ * span's turn count into the running total; without, matches the legacy format exactly. */
+export function buildTruncationSummary(newTurns: number, prior: LedgerState | undefined): string {
+	const total = prior ? prior.totalTurns + newTurns : newTurns;
+	const passes = prior ? prior.passes + 1 : 1;
+	const scope = prior
+		? ` across ${passes} compaction passes`
+		: "";
+	return `[${total} earlier turn${total === 1 ? "" : "s"} truncated${scope} — no summary was generated. ` +
+		`Relevant facts from this span may already be in long-term memory; use remember/recall if you need details.]`;
+}
+
 export default function theosesTruncateCompaction(theoses: ExtensionAPI) {
 	console.error("[truncate-compaction] factory invoked");
 
@@ -115,8 +159,8 @@ export default function theosesTruncateCompaction(theoses: ExtensionAPI) {
 		if (!dropped.length) return;
 
 		const turns = countTurns(dropped);
-		const summary = `[${turns} earlier turn${turns === 1 ? "" : "s"} truncated — no summary was generated. ` +
-			`Relevant facts from this span may already be in long-term memory; use remember/recall if you need details.]`;
+		const prior = config.ledger ? parseTruncationLedger(preparation.previousSummary) : undefined;
+		const summary = buildTruncationSummary(turns, prior);
 
 		console.error(`[truncate-compaction] truncating ${turns} turns instead of summarizing`);
 
